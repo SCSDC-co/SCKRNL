@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+OUT=$ROOT/build/firmware
+mkdir -p "$OUT"
+
+make -C "$ROOT/third_party/optee" -j"$(nproc)" \
+    O="$OUT/optee" \
+    PLATFORM=vexpress-qemu_armv8a \
+    CROSS_COMPILE64=aarch64-linux-gnu- CFG_ARM64_core=y \
+    CFG_ARM_GICV3=y ta-targets=ta_arm64 \
+    CFG_TEE_CORE_LOG_LEVEL=3 DEBUG=1
+
+UB=$OUT/uboot
+make -C "$ROOT/third_party/uboot" O="$UB" CROSS_COMPILE=aarch64-linux-gnu- qemu_arm64_defconfig
+"$ROOT/third_party/uboot/scripts/kconfig/merge_config.sh" -m -O "$UB" \
+    "$UB/.config" "$ROOT/config/uboot.conf"
+make -C "$ROOT/third_party/uboot" O="$UB" CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+make -C "$ROOT/third_party/uboot" O="$UB" CROSS_COMPILE=aarch64-linux-gnu- HOSTCFLAGS="-DOPENSSL_ENGINE_STUBS" -j"$(nproc)"
+
+make -C "$ROOT/third_party/tfa" -j"$(nproc)" \
+    BUILD_BASE="$OUT/tfa" \
+    PLAT=qemu ARCH=aarch64 CROSS_COMPILE=aarch64-linux-gnu- \
+    QEMU_USE_GIC_DRIVER=QEMU_GICV3 \
+    SPD=opteed DEBUG=0 ENABLE_ASSERTIONS=1 LOG_LEVEL=40 \
+    BL32="$OUT/optee/core/tee-header_v2.bin" \
+    BL32_EXTRA1="$OUT/optee/core/tee-pager_v2.bin" \
+    BL32_EXTRA2="$OUT/optee/core/tee-pageable_v2.bin" \
+    BL33="$OUT/bl33.bin" \
+    BL32_RAM_LOCATION=tdram \
+    all

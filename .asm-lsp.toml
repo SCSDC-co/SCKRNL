@@ -1,0 +1,9 @@
+[default_config]
+instruction_set = "arm64"
+assembler = "gas"
+
+[[project]]
+path = "."
+assembler = "gas"
+instruction_set = "arm64"
+opts.compiler = "gas"

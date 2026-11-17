@@ -1,0 +1,5 @@
+[build]
+target = "aarch64-unknown-none-softfloat"
+
+[target.aarch64-unknown-none-softfloat]
+runner = "qemu-system-aarch64 -machine virt,gic-version=3 -cpu cortex-a55 -nographic -semihosting -kernel"

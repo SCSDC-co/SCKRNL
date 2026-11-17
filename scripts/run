@@ -1,0 +1,29 @@
+#!/bin/sh
+# usage: scripts/run [--debug]
+set -eu
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+FW=$ROOT/build/firmware
+RUN=$ROOT/build/run
+ELF=$ROOT/target/aarch64-unknown-none-softfloat/debug/SCKRNL
+
+cargo build --manifest-path "$ROOT/Cargo.toml"
+mkdir -p "$RUN"
+
+cp "$FW/uboot/u-boot.bin" "$RUN/bl33.bin"
+aarch64-linux-gnu-objcopy -O binary "$ELF" "$RUN/kernel.bin"
+
+for f in bl1 bl2 bl31; do cp "$FW/tfa/qemu/release/$f.bin" "$RUN/"; done
+cp "$FW/optee/core/tee-header_v2.bin" "$RUN/bl32.bin"
+cp "$FW/optee/core/tee-pager_v2.bin" "$RUN/bl32_extra1.bin"
+cp "$FW/optee/core/tee-pageable_v2.bin" "$RUN/bl32_extra2.bin"
+
+GDB=""
+[ "${1:-}" = "--debug" ] && GDB="-s -S"
+
+cd "$RUN"
+exec qemu-system-aarch64 -nographic -smp 1 -cpu cortex-a55 \
+    -machine virt,secure=on,virtualization=on,gic-version=3 \
+    -m 1057 -bios bl1.bin \
+    -semihosting-config enable=on,target=native \
+    -serial mon:stdio -serial file:"$ROOT/optee.log" \
+    $GDB

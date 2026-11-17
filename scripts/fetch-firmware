@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+grep -v '^#' firmware.lock | while read -r name url rev; do
+    dir=third_party/$name
+    [ -d "$dir/.git" ] || { git init -q "$dir"; git -C "$dir" remote add origin "$url"; }
+    git -C "$dir" fetch -q --depth 1 origin "$rev"
+    git -C "$dir" checkout -q FETCH_HEAD
+done

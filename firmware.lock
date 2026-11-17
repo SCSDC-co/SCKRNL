@@ -1,0 +1,4 @@
+# name   url                                                     rev
+tfa      https://github.com/ARM-software/arm-trusted-firmware.git  20d0584ebeb0372f0081cbc32e71b2164e8c74e7
+optee    https://github.com/OP-TEE/optee_os.git                    71078511d67f83f9d2e2cd44c87cdbf706518f81
+uboot    https://github.com/u-boot/u-boot                          83b1ec64ede9998566e6a82b22848c20a33f4aff

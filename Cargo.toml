@@ -1,0 +1,13 @@
+[package]
+name = "SCKRNL"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+fault-tests = []
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
