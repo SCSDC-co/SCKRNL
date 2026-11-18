@@ -13,4 +13,5 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
+aarch64-cpu = "12.0.0"
 fdt = "0.1.5"

@@ -1,17 +1,33 @@
 use core::fmt::{self, Write};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
-const UART0: *mut u32 = 0x0900_0000 as *mut u32;
+// Used until the DTB has been parsed
+const DEFAULT_UART_BASE: usize = 0x0900_0000;
+static UART_BASE: AtomicUsize = AtomicUsize::new(DEFAULT_UART_BASE);
+
+pub fn set_base(base: usize) {
+    UART_BASE.store(base, Ordering::Relaxed);
+}
 
 pub struct Uart;
 
+unsafe fn putc(base: *mut u32, c: u8) {
+    unsafe {
+        let fr = base.byte_add(0x18);
+        while fr.read_volatile() & (1 << 5) != 0 {}
+        base.write_volatile(c as u32);
+    }
+}
+
 impl Write for Uart {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        let base = UART_BASE.load(Ordering::Relaxed) as *mut u32;
         for b in s.bytes() {
             unsafe {
                 if b == b'\n' {
-                    UART0.write_volatile(b'\r' as u32);
+                    putc(base, b'\r');
                 }
-                UART0.write_volatile(b as u32);
+                putc(base, b);
             }
         }
         Ok(())

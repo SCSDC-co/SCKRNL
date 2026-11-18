@@ -1,4 +1,4 @@
-use core::arch::{asm, global_asm};
+use core::arch::global_asm;
 use core::mem::{offset_of, size_of};
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -31,7 +31,7 @@ extern "C" fn handle_exception(frame: &mut TrapFrame, index: u64) {
     let kind = index % 4;
 
     #[cfg(feature = "fault-tests")]
-    if frame.esr & 0xFFFF == 0xDEAD {
+    if frame.esr & 0xFFFF == 0xDEAD && frame.x[0] == 0xF055F055F055F055 {
         println!("\nBRK Exception test, returning to kernel...\n");
         frame.elr += 4;
         return;
@@ -39,9 +39,7 @@ extern "C" fn handle_exception(frame: &mut TrapFrame, index: u64) {
 
     if IN_HANDLER.swap(true, Ordering::AcqRel) {
         loop {
-            unsafe {
-                asm!("wfe", options(nomem, nostack));
-            }
+            semihost_exit(2)
         }
     }
 

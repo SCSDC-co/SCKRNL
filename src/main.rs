@@ -6,10 +6,20 @@ use core::panic::PanicInfo;
 
 mod console;
 mod exceptions;
+mod mmu;
 
+use aarch64_cpu::registers::*;
 use fdt::Fdt;
+use mmu::Region;
 
 global_asm!(include_str!("boot.s"));
+
+const NONE: Region = Region { base: 0, size: 0 };
+
+unsafe extern "C" {
+    static __image_start: u8;
+    static __image_end: u8;
+}
 
 #[allow(dead_code)]
 fn poweroff() -> ! {
@@ -53,10 +63,50 @@ fn smc(id: u64, a1: u64, a2: u64, a3: u64) -> [u64; 4] {
     [r0, r1, r2, r3]
 }
 
+fn push_regs(node: fdt::node::FdtNode<'_, '_>, out: &mut [Region], n: &mut usize) {
+    let disabled = node
+        .property("status")
+        .and_then(|p| p.as_str())
+        .is_some_and(|s| s != "okay" && s != "ok");
+    if disabled {
+        return;
+    }
+    let Some(regs) = node.reg() else { return };
+    for r in regs {
+        let size = r.size.unwrap_or(0) as u64;
+        if size == 0 {
+            continue;
+        }
+        assert!(*n < out.len(), "too many device regions");
+        out[*n] = Region {
+            base: r.starting_address as u64,
+            size,
+        };
+        *n += 1;
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn kmain(dtb_ptr: usize) -> ! {
     let el: u64;
     unsafe { asm!("mrs {}, CurrentEL", out(reg) el) };
+
+    let image = (
+        &raw const __image_start as u64,
+        &raw const __image_end as u64,
+    );
+
+    let fdt = unsafe { Fdt::from_ptr(dtb_ptr as *const u8) }.expect("FDT Error");
+
+    let mut devices = [NONE; 8];
+    let mut ndev: usize = 0;
+
+    if let Some(console) = fdt.chosen().stdout() {
+        push_regs(console, &mut devices, &mut ndev);
+        if let Some(reg) = console.reg().and_then(|mut r| r.next()) {
+            console::set_base(reg.starting_address as usize);
+        }
+    }
 
     println!("Hello from SCKRNL!");
     println!("running at EL{}", (el >> 2) & 3);
@@ -64,23 +114,36 @@ pub extern "C" fn kmain(dtb_ptr: usize) -> ! {
 
     println!("PSCI_VERSION: {:#x}", ver[0]);
 
-    let fdt = unsafe { Fdt::from_ptr(dtb_ptr as *const u8) }.expect("FDT Error");
+    let mut mem = [NONE; 8];
+    let mut nmem: usize = 0;
 
-    let root = fdt.find_node("/").expect("Root node not found");
-
-    for node in root.children() {
-        println!("Node name: {}", node.name);
+    for m in fdt.memory().regions() {
+        let Some(size) = m.size else {
+            continue;
+        };
+        assert!(nmem < mem.len(), "Too many ram regions");
+        mem[nmem] = Region {
+            base: m.starting_address as u64,
+            size: size as u64,
+        };
+        nmem += 1;
     }
 
-    println!("Asking op-tee the uid...");
-    let recv = smc(0xBF00_FF01, 0, 0, 0);
-
-    for (i, reg) in recv.iter().enumerate() {
-        println!("Response x{i}: {reg:#0x}");
+    if let Some(gic) = fdt.find_compatible(&["arm,gic-v3"]) {
+        push_regs(gic, &mut devices, &mut ndev);
     }
+
+    let root_table_phys = unsafe { mmu::build_identity_map(&mem, &devices, image) };
+
+    println!("Enabling MMU\nMAIR Before: {}", MAIR_EL1.get(),);
+    unsafe {
+        mmu::enable(root_table_phys);
+    }
+    println!("MMU enabled");
+    println!("MAIR After: {}", MAIR_EL1.get(),);
 
     #[cfg(feature = "fault-tests")]
-    crash();
+    test_fault();
 
     #[cfg(feature = "fault-tests")]
     println!("Back to kmain!");
@@ -91,7 +154,7 @@ pub extern "C" fn kmain(dtb_ptr: usize) -> ! {
 }
 
 #[cfg(feature = "fault-tests")]
-fn crash() {
+fn test_fault() {
     println!("Exception");
     let reg: u64 = 0xF055F055F055F055;
     unsafe {
