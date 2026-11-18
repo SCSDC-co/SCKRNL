@@ -1,12 +1,50 @@
 #!/bin/sh
-# usage: scripts/run [--debug]
 set -eu
+
+usage() {
+    echo "usage: scripts/run [--debug] [-F feature]... [-n]" >&2
+    echo "  --debug   start QEMU halted with the gdbstub on :1234" >&2
+    echo "  -F name   enable a Cargo feature (repeatable, or comma-separated)" >&2
+    echo "  -n        disable default features" >&2
+}
+
+DEBUG=0
+FEATURES=""
+NO_DEFAULT=""
+
+while [ $# -gt 0 ]; do
+    case $1 in
+    --debug) DEBUG=1 ;;
+    -F)
+        [ $# -ge 2 ] || {
+            echo "-F needs a feature name" >&2
+            usage
+            exit 2
+        }
+        FEATURES="${FEATURES:+$FEATURES,}$2"
+        shift
+        ;;
+    -F*) FEATURES="${FEATURES:+$FEATURES,}${1#-F}" ;;
+    -n | --no-default-features) NO_DEFAULT=--no-default-features ;;
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    *)
+        echo "unknown option: $1" >&2
+        usage
+        exit 2
+        ;;
+    esac
+    shift
+done
+
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 FW=$ROOT/build/firmware
 RUN=$ROOT/build/run
 ELF=$ROOT/target/aarch64-unknown-none-softfloat/debug/SCKRNL
 
-cargo build --manifest-path "$ROOT/Cargo.toml"
+cargo build --manifest-path "$ROOT/Cargo.toml" $NO_DEFAULT ${FEATURES:+--features $FEATURES}
 mkdir -p "$RUN"
 
 cp "$FW/uboot/u-boot.bin" "$RUN/bl33.bin"
@@ -18,7 +56,7 @@ cp "$FW/optee/core/tee-pager_v2.bin" "$RUN/bl32_extra1.bin"
 cp "$FW/optee/core/tee-pageable_v2.bin" "$RUN/bl32_extra2.bin"
 
 GDB=""
-[ "${1:-}" = "--debug" ] && GDB="-s -S"
+[ "$DEBUG" = 1 ] && GDB="-s -S"
 
 cd "$RUN"
 exec qemu-system-aarch64 -nographic -smp 1 -cpu cortex-a55 \

@@ -7,6 +7,8 @@ use core::panic::PanicInfo;
 mod console;
 mod exceptions;
 
+use fdt::Fdt;
+
 global_asm!(include_str!("boot.s"));
 
 #[allow(dead_code)]
@@ -52,7 +54,7 @@ fn smc(id: u64, a1: u64, a2: u64, a3: u64) -> [u64; 4] {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn kmain(_dtb_ptr: usize) -> ! {
+pub extern "C" fn kmain(dtb_ptr: usize) -> ! {
     let el: u64;
     unsafe { asm!("mrs {}, CurrentEL", out(reg) el) };
 
@@ -61,6 +63,14 @@ pub extern "C" fn kmain(_dtb_ptr: usize) -> ! {
     let ver = smc(0x8400_0000, 0, 0, 0);
 
     println!("PSCI_VERSION: {:#x}", ver[0]);
+
+    let fdt = unsafe { Fdt::from_ptr(dtb_ptr as *const u8) }.expect("FDT Error");
+
+    let root = fdt.find_node("/").expect("Root node not found");
+
+    for node in root.children() {
+        println!("Node name: {}", node.name);
+    }
 
     println!("Asking op-tee the uid...");
     let recv = smc(0xBF00_FF01, 0, 0, 0);
@@ -72,15 +82,21 @@ pub extern "C" fn kmain(_dtb_ptr: usize) -> ! {
     #[cfg(feature = "fault-tests")]
     crash();
 
-    println!("Shutting down");
+    #[cfg(feature = "fault-tests")]
+    println!("Back to kmain!");
+
+    println!("\nShutting down");
 
     poweroff()
 }
 
 #[cfg(feature = "fault-tests")]
 fn crash() {
-    println!("Accessing op-tee owned memory (should cause exception)...");
-    let _ = unsafe { (0x0E100000 as *const usize).read_volatile() };
+    println!("Exception");
+    let reg: u64 = 0xF055F055F055F055;
+    unsafe {
+        asm!("brk #0xDEAD", in("x0") reg);
+    }
 }
 
 #[panic_handler]

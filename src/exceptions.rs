@@ -26,12 +26,30 @@ const _: () = {
 
 static IN_HANDLER: AtomicBool = AtomicBool::new(false);
 
-extern "C" fn handle_exception(frame: &mut TrapFrame, index: u64) -> ! {
+extern "C" fn handle_exception(frame: &mut TrapFrame, index: u64) {
+    let source = index / 4;
+    let kind = index % 4;
+
+    #[cfg(feature = "fault-tests")]
+    if frame.esr & 0xFFFF == 0xDEAD {
+        println!("\nBRK Exception test, returning to kernel...\n");
+        frame.elr += 4;
+        return;
+    }
+
+    if IN_HANDLER.swap(true, Ordering::AcqRel) {
+        loop {
+            unsafe {
+                asm!("wfe", options(nomem, nostack));
+            }
+        }
+    }
+
     println!("\nCPU EXCEPTION");
     println!(
         "Caused by: {} - {}",
-        vector_source(index),
-        vector_kind(index)
+        vector_source(source),
+        vector_kind(kind)
     );
     println!("\nSPECIAL REGISTER DUMP:");
     println!("SPSR: {:#018x}", frame.spsr);
@@ -53,11 +71,13 @@ extern "C" fn handle_exception(frame: &mut TrapFrame, index: u64) -> ! {
         }
     }
 
+    IN_HANDLER.store(false, Ordering::Release);
+
     semihost_exit(2)
 }
 
-fn vector_source(index: u64) -> &'static str {
-    match index / 4 {
+fn vector_source(source: u64) -> &'static str {
+    match source {
         0 => "Current EL SP0",
         1 => "Current EL SPx",
         2 => "Lower EL AArch64",
@@ -66,8 +86,8 @@ fn vector_source(index: u64) -> &'static str {
     }
 }
 
-fn vector_kind(index: u64) -> &'static str {
-    match index % 4 {
+fn vector_kind(kind: u64) -> &'static str {
+    match kind {
         0 => "Synchronous",
         1 => "IRQ",
         2 => "FIQ",
