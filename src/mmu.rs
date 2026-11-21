@@ -1,7 +1,8 @@
 use aarch64_cpu::{asm::barrier, registers::*};
 use core::arch::asm;
 
-const BLOCK_2M: u64 = 2 << 20;
+pub const BLOCK_2M: u64 = 2 << 20;
+pub const PAGE: u64 = 4096;
 
 const ATTR_DEVICE: u64 = 0;
 const ATTR_NORMAL: u64 = 1;
@@ -31,10 +32,124 @@ pub struct Region {
     pub size: u64,
 }
 
-const fn align_down(x: u64, a: u64) -> u64 {
+#[derive(Clone, Copy)]
+pub struct Range {
+    pub start: u64,
+    pub end: u64,
+}
+
+impl Range {
+    pub const fn is_empty(&self) -> bool {
+        self.start >= self.end
+    }
+}
+
+pub struct RangeSet<const N: usize> {
+    range: [Range; N],
+    len: usize,
+}
+
+impl<const N: usize> RangeSet<N> {
+    pub const fn new() -> Self {
+        Self {
+            range: [Range { start: 0, end: 0 }; N],
+            len: 0,
+        }
+    }
+
+    pub fn insert(&mut self, x: Range) {
+        if x.is_empty() {
+            return;
+        }
+        assert!(self.len < N, "RangeSet full");
+        self.range[self.len] = x;
+        self.len += 1;
+    }
+    pub fn subtract(&mut self, x: Range) {
+        if x.is_empty() {
+            return;
+        }
+        let mut i = 0;
+        while i < self.len {
+            let f = self.range[i];
+            if x.end <= f.start || x.start >= f.end {
+                i += 1;
+                continue;
+            }
+
+            let left = Range {
+                start: f.start,
+                end: x.start,
+            };
+            let right = Range {
+                start: x.end,
+                end: f.end,
+            };
+            match (!left.is_empty(), !right.is_empty()) {
+                (true, true) => {
+                    self.range[i] = left;
+                    self.insert(right);
+                    i += 1;
+                }
+                (true, false) => {
+                    self.range[i] = left;
+                    i += 1;
+                }
+                (false, true) => {
+                    self.range[i] = right;
+                    i += 1;
+                }
+                (false, false) => {
+                    self.len -= 1;
+                    self.range[i] = self.range[self.len];
+                }
+            }
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Range> {
+        self.range[..self.len].iter()
+    }
+
+    pub fn sort(&mut self) {
+        self.range[..self.len].sort_unstable_by_key(|r| r.start);
+    }
+
+    pub fn total(&self) -> u64 {
+        self.iter().map(|r| r.end - r.start).sum()
+    }
+
+    pub fn mem_start(&self) -> Result<u64, ()> {
+        if self.len == 0 {
+            return Err(());
+        }
+
+        Ok(self.range[0].start)
+    }
+
+    pub fn mem_end(&self) -> Result<u64, ()> {
+        if self.len == 0 {
+            return Err(());
+        }
+
+        Ok(self.range[self.len - 1].end)
+    }
+}
+
+pub fn reserve<const N: usize>(free: &mut RangeSet<N>, start: u64, end: u64) {
+    if start >= end {
+        return;
+    }
+    free.subtract(Range {
+        start: align_down(start, PAGE),
+        end: align_up(end, PAGE),
+    });
+}
+
+pub const fn align_down(x: u64, a: u64) -> u64 {
     x & !(a - 1)
 }
-const fn align_up(x: u64, a: u64) -> u64 {
+pub const fn align_up(x: u64, a: u64) -> u64 {
     (x + a - 1) & !(a - 1)
 }
 
@@ -70,6 +185,15 @@ unsafe fn map_blocks(start: u64, end: u64, attrs: impl Fn(u64) -> u64) {
             slot.write(desc);
         }
         pa += BLOCK_2M;
+    }
+}
+
+pub fn trim_ram(ram: &mut [Region]) {
+    for r in ram {
+        let start = align_up(r.base, BLOCK_2M);
+        let end = align_down(r.base.saturating_add(r.size), BLOCK_2M);
+        r.base = start;
+        r.size = end.saturating_sub(start);
     }
 }
 

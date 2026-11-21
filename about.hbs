@@ -1,0 +1,22 @@
+# Third-party licenses
+
+This project uses the following third-party dependencies.
+
+{{#each licenses}}
+---
+
+## {{name}} ({{id}})
+
+{{#if used_by}}
+**Used by:**
+
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}
+{{/each}}
+{{/if}}
+
+### License text
+
+{{{text}}}
+
+{{/each}}
